@@ -1,0 +1,33 @@
+{
+  "name": "ultramagnus",
+  "version": "1.0.0",
+  "description": "UltraMagnus – MEXC spot trading bot. Long-only, no leverage, no futures.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "dev:watch": "ts-node-dev --respawn --transpile-only src/index.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "ccxt": "^4.4.0",
+    "dotenv": "^16.4.5",
+    "node-cron": "^3.0.3",
+    "protobufjs": "^8.0.0",
+    "technicalindicators": "^3.1.0",
+    "winston": "^3.13.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/ws": "^8.5.12",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.5.0"
+  }
+}

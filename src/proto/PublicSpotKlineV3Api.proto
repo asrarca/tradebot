@@ -1,0 +1,29 @@
+// spot@public.kline.v3.api.pb@<symbol>@<interval>
+
+syntax = "proto3";
+
+option java_package = "com.mxc.push.common.protobuf";
+option optimize_for = SPEED;
+option java_multiple_files = true;
+option java_outer_classname = "PublicSpotKlineV3ApiProto";
+
+message PublicSpotKlineV3Api {
+  // K-line interval (Min1,Min5,Min15,Min30,Min60,Hour4,Hour8,Day1,Week1,Month1)
+  string interval = 1;
+  // Window start timestamp (Unix seconds)
+  int64 windowStart = 2;
+  // Opening price
+  string openingPrice = 3;
+  // Closing price
+  string closingPrice = 4;
+  // Highest price
+  string highestPrice = 5;
+  // Lowest price
+  string lowestPrice = 6;
+  // Volume
+  string volume = 7;
+  // Amount (turnover)
+  string amount = 8;
+  // Window end timestamp (Unix seconds)
+  int64 windowEnd = 9;
+}

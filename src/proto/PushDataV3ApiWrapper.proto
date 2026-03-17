@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+import "PublicSpotKlineV3Api.proto";
+
+option java_package = "com.mxc.push.common.protobuf";
+option optimize_for = SPEED;
+option java_multiple_files = true;
+option java_outer_classname = "PushDataV3ApiWrapperProto";
+
+message PushDataV3ApiWrapper {
+  // Channel name
+  string channel = 1;
+
+  // Body — one of the supported message types
+  oneof body {
+    PublicSpotKlineV3Api publicSpotKline = 308;
+  }
+
+  // Trading pair e.g. "BTCUSDT"
+  optional string symbol = 3;
+
+  // Trading pair ID
+  optional string symbolId = 4;
+
+  // Message creation time (Unix ms)
+  optional int64 createTime = 5;
+
+  // Message send time (Unix ms)
+  optional int64 sendTime = 6;
+}

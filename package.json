@@ -1,6 +1,6 @@
 {
   "name": "ultramagnus",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "UltraMagnus – MEXC spot trading bot. Long-only, no leverage, no futures.",
   "main": "dist/index.js",
   "scripts": {

@@ -1,7 +1,8 @@
 import { RiskManager } from '../core/riskManager';
 import { DataLayer } from '../core/dataLayer';
 import { CycleManager } from '../core/cycleManager';
-import { computeIndicators } from '../core/indicators';
+import { computeTrendIndicators } from '../core/indicators';
+import { getAccountUsdtEquity } from '../core/exchange';
 import { TOKENS } from '../config/tokens';
 import { SETTINGS } from '../config/settings';
 
@@ -44,19 +45,13 @@ function padEnd(s: string, width: number): string {
   return s + ' '.repeat(Math.max(0, width - visLen(s)));
 }
 
-/** Colour RSI value: green=oversold, red=overbought, yellow=heating, cyan=neutral */
-function rsiColor(rsi: number): string {
-  if (rsi <= 30) return GREEN;
-  if (rsi >= 70) return RED;
-  if (rsi >= 60) return YELLOW;
-  return CYAN;
-}
-
 const BOTTOM_BORDER = `${CYAN}${BOLD}╚══════════════════════════════════════════════════════════════════╝${RESET}`;
 
 export class Dashboard {
   private dashTimer: ReturnType<typeof setInterval> | null = null;
   private tickerTimer: ReturnType<typeof setInterval> | null = null;
+  private liveEquityUsdt: number | null = null;
+  private liveEquityLoading = false;
 
   constructor(
     private risk: RiskManager,
@@ -65,11 +60,24 @@ export class Dashboard {
   ) {}
 
   start(): void {
+    if (SETTINGS.MODE === 'live') {
+      void this.refreshLiveEquity();
+    }
     this.printFull();
     this.dashTimer = setInterval(() => this.printFull(), SETTINGS.DASHBOARD_REFRESH_MS);
     if (SETTINGS.PRICE_TICKER_ENABLED) {
       // Skip the very first tick – printFull() just ran
       this.tickerTimer = setInterval(() => this.printPriceTicker(), SETTINGS.PRICE_TICKER_REFRESH_MS);
+    }
+  }
+
+  private async refreshLiveEquity(): Promise<void> {
+    if (SETTINGS.MODE !== 'live' || this.liveEquityLoading) return;
+    this.liveEquityLoading = true;
+    try {
+      this.liveEquityUsdt = await getAccountUsdtEquity();
+    } finally {
+      this.liveEquityLoading = false;
     }
   }
 
@@ -83,17 +91,18 @@ export class Dashboard {
     const COL_W = 20;
     const headerCells: string[] = [];
     const priceCells:  string[] = [];
-    const rsiCells:    string[] = [];
-    const bbHighCells: string[] = [];
-    const bbLowCells:  string[] = [];
+    const trendCells:  string[] = [];
+    const emaCells:    string[] = [];
+    const vwapCells:   string[] = [];
 
     for (const token of TOKENS) {
       const candles  = this.dataLayer.getCandles(token.symbol, '1m');
-      const strategyCandles = this.dataLayer.getCandles(token.symbol, SETTINGS.STRATEGY_TIMEFRAME);
+      const directionCandles = this.dataLayer.getCandles(token.symbol, SETTINGS.STRATEGY_DIRECTION_TIMEFRAME);
       const lastTick = this.dataLayer.getLastTickAt(token.symbol, '1m');
       const price    = candles.length > 0 ? candles[candles.length - 1].close : null;
-      const rsi      = this.dataLayer.getLiveRsi(token.symbol, SETTINGS.STRATEGY_TIMEFRAME, SETTINGS.RSI_PERIOD);
-      const indicators = computeIndicators(strategyCandles);
+      const entryIndicators = computeTrendIndicators(candles);
+      const directionIndicators = computeTrendIndicators(directionCandles);
+      const trendSnapshot = this.cycleManager.getTrendSnapshot(token.symbol);
 
       // Column header – token symbol
       headerCells.push(padEnd(`${BOLD}${token.symbol}${RESET}`, COL_W));
@@ -115,22 +124,25 @@ export class Dashboard {
         : `${DIM}loading…${RESET}`;
       priceCells.push(padEnd(priceStr, COL_W));
 
-      // RSI cell
-      const rsiStr = rsi !== null
-        ? `RSI15 ${rsiColor(rsi)}${rsi.toFixed(1)}${RESET}`
-        : `${DIM}RSI —${RESET}`;
-      rsiCells.push(padEnd(rsiStr, COL_W));
+      const trendStr = trendSnapshot
+        ? trendSnapshot.bias === 'bullish'
+          ? `${GREEN}5m BULL${RESET}`
+          : trendSnapshot.bias === 'bearish'
+            ? `${RED}5m BEAR${RESET}`
+            : `${YELLOW}5m NEUTRAL${RESET}`
+        : `${DIM}5m —${RESET}`;
+      trendCells.push(padEnd(trendStr, COL_W));
 
-      // Bollinger rows (strategy timeframe)
-      const bbDecimals = price !== null && price < 1 ? 4 : 2;
-      const bbHighStr = indicators
-        ? `${YELLOW}BBH $${indicators.bb.upper.toFixed(bbDecimals)}${RESET}`
-        : `${DIM}BBH —${RESET}`;
-      const bbLowStr = indicators
-        ? `${CYAN}BBL $${indicators.bb.lower.toFixed(bbDecimals)}${RESET}`
-        : `${DIM}BBL —${RESET}`;
-      bbHighCells.push(padEnd(bbHighStr, COL_W));
-      bbLowCells.push(padEnd(bbLowStr, COL_W));
+      const emaDecimals = price !== null && price < 1 ? 4 : 2;
+      const emaStr = entryIndicators
+        ? `${CYAN}EMA9/20 ${entryIndicators.emaFast.toFixed(emaDecimals)}/${entryIndicators.emaSlow.toFixed(emaDecimals)}${RESET}`
+        : `${DIM}EMA9/20 —${RESET}`;
+      emaCells.push(padEnd(emaStr, COL_W));
+
+      const vwapStr = directionIndicators
+        ? `${YELLOW}VWAP5 $${directionIndicators.vwap.toFixed(emaDecimals)}${RESET}`
+        : `${DIM}VWAP5 —${RESET}`;
+      vwapCells.push(padEnd(vwapStr, COL_W));
     }
 
     const sep    = `  ${DIM}│${RESET}  `;
@@ -140,17 +152,26 @@ export class Dashboard {
       `${CYAN}${BOLD}╠══════════════════════════ Live Prices ═════════════════════════════╣${RESET}`,
       prefix + headerCells.join(sep),
       prefix + priceCells.join(sep),
-      prefix + rsiCells.join(sep),
-      prefix + bbHighCells.join(sep),
-      prefix + bbLowCells.join(sep),
+      prefix + trendCells.join(sep),
+      prefix + emaCells.join(sep),
+      prefix + vwapCells.join(sep),
     ];
   }
 
   // ── Full dashboard render (clears screen, runs every DASHBOARD_REFRESH_MS) ───────
   printFull(): void {
+    if (SETTINGS.MODE === 'live') {
+      void this.refreshLiveEquity();
+    }
+
     const now = new Date().toLocaleString('en-CA', { timeZone: 'UTC', hour12: false });
     const mode = SETTINGS.MODE === 'paper' ? `${YELLOW}PAPER${RESET}` : `${RED}LIVE${RESET}`;
-    const balance = this.risk.paperBalance;
+    const balance = SETTINGS.MODE === 'live'
+      ? (this.liveEquityUsdt ?? 0)
+      : this.risk.paperBalance;
+    const balanceStr = SETTINGS.MODE === 'live' && this.liveEquityUsdt === null
+      ? `${DIM}syncing…${RESET}`
+      : `$${balance.toFixed(2)} USDT`;
     const dailyPnl = this.risk.getDailyPnl();
     const dailyPct = this.risk.getDailyPnlPercent();
     const winRate = this.risk.getWinRate();
@@ -167,10 +188,9 @@ export class Dashboard {
       `${CYAN}${BOLD}╔══════════════════════════ UltraMagnus ═════════════════════════════╗${RESET}`,
       `${CYAN}${BOLD}║${RESET}  ${BOLD}Mode:${RESET} ${mode}  ${BOLD}UTC:${RESET} ${now}`,
       `${CYAN}${BOLD}║${RESET}  ${BOLD}Status:${RESET} ${statusLine}`,
-      `${CYAN}${BOLD}║${RESET}  ${BOLD}Balance:${RESET} $${balance.toFixed(2)} USDT  ${BOLD}Daily PnL:${RESET} $${colorPnl(dailyPnl)} ${colorPercent(dailyPct)}`,
-      `${CYAN}${BOLD}║${RESET}  ${BOLD}Daily target:${RESET} ${bar(Math.max(dailyPct, 0), SETTINGS.DAILY_PROFIT_LOCK_PERCENT)} 3%  ${BOLD}Stretch:${RESET} 10%`,
+      `${CYAN}${BOLD}║${RESET}  ${BOLD}Balance:${RESET} ${balanceStr}  ${BOLD}Daily PnL:${RESET} $${colorPnl(dailyPnl)} ${colorPercent(dailyPct)}`,
       `${CYAN}${BOLD}║${RESET}  ${BOLD}Win rate:${RESET} ${(winRate * 100).toFixed(0)}% (${totalTrades} trades)`,
-      `${CYAN}${BOLD}║${RESET}  ${BOLD}Strategy:${RESET} ${SETTINGS.STRATEGY_TIMEFRAME} BB mean reversion  ${BOLD}Entry:${RESET} ≤ ${(SETTINGS.BB_ENTRY_MAX_DISTANCE_PERCENT * 100).toFixed(1)}% from BB low + RSI < ${SETTINGS.BB_ENTRY_RSI_MAX}  ${BOLD}Exit:${RESET} BB high + RSI > ${SETTINGS.BB_EXIT_RSI_MIN}`,
+      `${CYAN}${BOLD}║${RESET}  ${BOLD}Strategy:${RESET} VWAP + EMA9/20 retrace  ${BOLD}Direction:${RESET} ${SETTINGS.STRATEGY_DIRECTION_TIMEFRAME}  ${BOLD}Entry:${RESET} ${SETTINGS.STRATEGY_ENTRY_TIMEFRAME} pullback rejection  ${BOLD}Risk:${RESET} RR ${SETTINGS.RISK_REWARD_RATIO}:1`,
       `${CYAN}${BOLD}╠══════════════════════════ Cycle States ════════════════════════════╣${RESET}`,
     ];
 
@@ -186,8 +206,8 @@ export class Dashboard {
         lines.push(
           `${CYAN}${BOLD}║${RESET}  ${BOLD}${c.symbol}${RESET}  ${stateStr}` +
           `  entry@$${pos.buyFillPrice.toFixed(2)}` +
-          `  entry RSI ${pos.entryRsi.toFixed(1)}` +
-          `  exit: BB high + RSI > ${pos.exitRsiThreshold}` +
+          `  stop@$${pos.stopPrice.toFixed(2)}` +
+          `  tp@$${pos.takeProfitPrice.toFixed(2)}` +
           `  ${DIM}open ${minsOpen}m${RESET}`,
         );
       } else if (c.state === 'cooldown') {

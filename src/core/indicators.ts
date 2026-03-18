@@ -3,6 +3,7 @@ import {
   RSI,
   ATR,
   SMA,
+  EMA,
 } from 'technicalindicators';
 import { Candle } from './dataLayer';
 import { SETTINGS } from '../config/settings';
@@ -24,6 +25,69 @@ export interface IndicatorResult {
   currentHigh: number;
   currentLow: number;
   prevClose: number; // previous candle's close – used for crossover detection
+}
+
+export interface TrendIndicatorResult {
+  emaFast: number;
+  emaSlow: number;
+  vwap: number;
+  currentOpen: number;
+  currentHigh: number;
+  currentLow: number;
+  currentClose: number;
+  prevClose: number;
+}
+
+function computeSessionVwap(candles: Candle[]): number | null {
+  if (!candles.length) return null;
+
+  const last = candles[candles.length - 1];
+  const dayStart = new Date(last.time);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayStartMs = dayStart.getTime();
+
+  const sessionCandles = candles.filter((c) => c.time >= dayStartMs);
+  const source = sessionCandles.length > 0 ? sessionCandles : candles;
+
+  let pv = 0;
+  let vv = 0;
+  for (const c of source) {
+    const typical = (c.high + c.low + c.close) / 3;
+    pv += typical * c.volume;
+    vv += c.volume;
+  }
+
+  if (vv <= 0) return null;
+  return pv / vv;
+}
+
+export function computeTrendIndicators(candles: Candle[]): TrendIndicatorResult | null {
+  const fast = SETTINGS.EMA_FAST_PERIOD;
+  const slow = SETTINGS.EMA_SLOW_PERIOD;
+  const minRequired = Math.max(fast, slow) + 5;
+  if (candles.length < minRequired) return null;
+
+  const closes = candles.map((c) => c.close);
+  const emaFastArr = EMA.calculate({ period: fast, values: closes });
+  const emaSlowArr = EMA.calculate({ period: slow, values: closes });
+  if (!emaFastArr.length || !emaSlowArr.length) return null;
+
+  const vwap = computeSessionVwap(candles);
+  if (vwap === null) return null;
+
+  const last = candles[candles.length - 1];
+  const prev = candles[candles.length - 2];
+
+  return {
+    emaFast: emaFastArr[emaFastArr.length - 1],
+    emaSlow: emaSlowArr[emaSlowArr.length - 1],
+    vwap,
+    currentOpen: last.open,
+    currentHigh: last.high,
+    currentLow: last.low,
+    currentClose: last.close,
+    prevClose: prev?.close ?? last.close,
+  };
 }
 
 // ─── Compute all indicators for a candle buffer ───────────────────────────────

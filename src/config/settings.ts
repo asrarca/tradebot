@@ -14,7 +14,9 @@ export const SETTINGS = {
 
   // ── Exchange ─────────────────────────────────────────────────────────────────
   TAKER_FEE: 0.001,           // MEXC spot taker fee: 0.1%
-  CANDLE_INTERVALS: ['1m', '15m'] as const,
+  EXECUTION_MARKET_TYPE: (process.env.EXECUTION_MARKET_TYPE ?? 'swap') as 'spot' | 'swap', // swap enables shorting
+  ALLOW_SHORTS: (process.env.ALLOW_SHORTS ?? 'true') === 'true',
+  CANDLE_INTERVALS: ['1m', '5m'] as const,
   CANDLE_BUFFER_SIZE: 50,     // Rolling candle history per pair per interval
 
   // ── Signal parameters (defaults – can be overridden per token in tokens.ts) ─
@@ -46,13 +48,19 @@ export const SETTINGS = {
   ENTRY_TIMEOUT_MIN_MS: 10 * 60 * 1000,
   ENTRY_TIMEOUT_MAX_MS: 20 * 60 * 1000,
 
-  // ── 15m Bollinger spot strategy ───────────────────────────────────────────────
-  STRATEGY_TIMEFRAME: '15m',      // Candle timeframe that drives entries/exits
-  BUY_SIZE_USDT: 50,             // Fixed notional per spot buy
-  BB_ENTRY_MAX_DISTANCE_PERCENT: 0.02, // Enter when price is within 2% of BB low
-  BB_ENTRY_RSI_MAX: 35,           // Entry requires RSI below this level
-  BB_EXIT_RSI_MIN: 65,            // Exit requires RSI above this level
-  CYCLE_COOLDOWN_MS: 5 * 60 * 1000, // Cooldown after a completed spot cycle
+  // ── VWAP + 9/20 EMA retrace strategy ────────────────────────────────────────
+  STRATEGY_DIRECTION_TIMEFRAME: '5m', // Trend/breakout detection timeframe
+  STRATEGY_ENTRY_TIMEFRAME: '1m',     // Entry/exit trigger timeframe
+  BUY_SIZE_USDT: 20,                  // Fixed notional per spot buy
+  EMA_FAST_PERIOD: 9,
+  EMA_SLOW_PERIOD: 20,
+  BREAKOUT_LOOKBACK_5M: 6,            // 6 x 5m = last 30m structure
+  BREAKOUT_ARM_MS: 45 * 60 * 1000,    // Breakout remains valid for pullback entry
+  EMA_RETRACE_TOLERANCE_PERCENT: 0.0015, // Allow slight dip below EMA20 on retrace
+  STOP_BUFFER_PERCENT: 0.0005,        // Stop padding below pullback low/EMA20
+  DEFAULT_STOP_PERCENT: 0.0035,       // Fallback stop if computed stop is invalid
+  RISK_REWARD_RATIO: 2.0,             // TP = risk * RR from entry
+  CYCLE_COOLDOWN_MS: 5 * 60 * 1000,   // Cooldown after a completed spot cycle
 
   // ── Daily PnL thresholds ─────────────────────────────────────────────────────
   DAILY_PROFIT_LOCK_PERCENT: 0.04,     // Pause new entries at +4% daily gain (lets volatile days run)

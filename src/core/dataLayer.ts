@@ -3,7 +3,7 @@ import protobuf from 'protobufjs';
 import path from 'path';
 import { RSI } from 'technicalindicators';
 import { fetchOHLCV } from './exchange';
-import { SETTINGS } from '../config/settings';
+import { SETTINGS } from '../config/runtimeSettings';
 import { SYMBOLS } from '../config/tokens';
 import logger from '../utils/logger';
 
@@ -47,6 +47,11 @@ export class DataLayer {
   private readonly MEXC_WS_BASE = 'wss://wbs-api.mexc.com/ws';
   private WrapperType!: protobuf.Type; // PushDataV3ApiWrapper protobuf type
 
+  constructor(
+    private readonly symbols: string[] = SYMBOLS,
+    private readonly intervals: string[] = [...SETTINGS.CANDLE_INTERVALS],
+  ) {}
+
   // Register a listener to be called on every new closed candle
   onCandle(cb: CandleCallback): void {
     this.callbacks.push(cb);
@@ -66,8 +71,8 @@ export class DataLayer {
 
     // Seed each symbol × interval in parallel
     await Promise.all(
-      SYMBOLS.flatMap((symbol) =>
-        SETTINGS.CANDLE_INTERVALS.map((interval) =>
+      this.symbols.flatMap((symbol) =>
+        this.intervals.map((interval) =>
           this.seedBuffer(symbol, interval),
         ),
       ),
@@ -75,13 +80,16 @@ export class DataLayer {
 
     logger.info('DataLayer: candle buffers seeded, connecting WebSocket streams…');
 
-    for (const symbol of SYMBOLS) {
-      for (const interval of SETTINGS.CANDLE_INTERVALS) {
+    for (const symbol of this.symbols) {
+      for (const interval of this.intervals) {
         this.subscribeStream(symbol, interval);
       }
     }
 
-    logger.info(`DataLayer: subscribed to ${SYMBOLS.length * SETTINGS.CANDLE_INTERVALS.length} streams`);
+    logger.info(`DataLayer: subscribed to ${this.symbols.length * this.intervals.length} streams`, {
+      symbols: this.symbols,
+      intervals: this.intervals,
+    });
   }
 
   // ── Seed a single buffer with historical candles via REST ────────────────────

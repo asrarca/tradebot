@@ -1,9 +1,9 @@
 import { RiskManager } from '../core/riskManager';
 import { DataLayer } from '../core/dataLayer';
 import { CycleManager } from '../core/cycleManager';
-import { computeIndicators } from '../core/indicators';
+import { computeIndicators, computeTrendIndicators } from '../core/indicators';
 import { TOKENS } from '../config/tokens';
-import { SETTINGS } from '../config/settings';
+import { SETTINGS } from '../config/runtimeSettings';
 
 // ─── Terminal Dashboard ───────────────────────────────────────────────────────
 // Prints a live summary to stdout every DASHBOARD_REFRESH_MS (30s default).
@@ -80,20 +80,30 @@ export class Dashboard {
 
   // ── Build price table rows (shared by full render and ticker) ─────────────────────
   private buildPriceLines(): string[] {
+    const isBbStrategy    = SETTINGS.ACTIVE_STRATEGY === 'bb-mean-reversion';
+    const isSwingStrategy = SETTINGS.ACTIVE_STRATEGY === 'rsi-stoch-swing';
     const COL_W = 20;
     const headerCells: string[] = [];
     const priceCells:  string[] = [];
-    const rsiCells:    string[] = [];
-    const bbHighCells: string[] = [];
-    const bbLowCells:  string[] = [];
+    const row3Cells: string[] = [];
+    const row4Cells: string[] = [];
+    const row5Cells: string[] = [];
 
     for (const token of TOKENS) {
       const candles  = this.dataLayer.getCandles(token.symbol, '1m');
-      const strategyCandles = this.dataLayer.getCandles(token.symbol, SETTINGS.STRATEGY_TIMEFRAME);
+      const strategyCandles = this.dataLayer.getCandles(
+        token.symbol,
+        isBbStrategy ? SETTINGS.STRATEGY_TIMEFRAME
+          : isSwingStrategy ? SETTINGS.SWING_TIMEFRAME
+          : SETTINGS.STRATEGY_ENTRY_TIMEFRAME,
+      );
       const lastTick = this.dataLayer.getLastTickAt(token.symbol, '1m');
       const price    = candles.length > 0 ? candles[candles.length - 1].close : null;
       const rsi      = this.dataLayer.getLiveRsi(token.symbol, SETTINGS.STRATEGY_TIMEFRAME, SETTINGS.RSI_PERIOD);
-      const indicators = computeIndicators(strategyCandles);
+      const bbIndicators    = isBbStrategy    ? computeIndicators(strategyCandles)      : null;
+      const trendIndicators = !isBbStrategy && !isSwingStrategy ? computeTrendIndicators(strategyCandles) : null;
+      const trend           = !isBbStrategy && !isSwingStrategy ? this.cycleManager.getTrendSnapshot(token.symbol) : null;
+      const swingSnap       = isSwingStrategy ? this.cycleManager.getSwingSnapshot(token.symbol) : null;
 
       // Column header – token symbol
       headerCells.push(padEnd(`${BOLD}${token.symbol}${RESET}`, COL_W));
@@ -115,22 +125,51 @@ export class Dashboard {
         : `${DIM}loading…${RESET}`;
       priceCells.push(padEnd(priceStr, COL_W));
 
-      // RSI cell
-      const rsiStr = rsi !== null
-        ? `RSI15 ${rsiColor(rsi)}${rsi.toFixed(1)}${RESET}`
-        : `${DIM}RSI —${RESET}`;
-      rsiCells.push(padEnd(rsiStr, COL_W));
+      if (isBbStrategy) {
+        const rsiStr = rsi !== null
+          ? `RSI15 ${rsiColor(rsi)}${rsi.toFixed(1)}${RESET}`
+          : `${DIM}RSI —${RESET}`;
+        row3Cells.push(padEnd(rsiStr, COL_W));
 
-      // Bollinger rows (strategy timeframe)
-      const bbDecimals = price !== null && price < 1 ? 4 : 2;
-      const bbHighStr = indicators
-        ? `${YELLOW}BBH $${indicators.bb.upper.toFixed(bbDecimals)}${RESET}`
-        : `${DIM}BBH —${RESET}`;
-      const bbLowStr = indicators
-        ? `${CYAN}BBL $${indicators.bb.lower.toFixed(bbDecimals)}${RESET}`
-        : `${DIM}BBL —${RESET}`;
-      bbHighCells.push(padEnd(bbHighStr, COL_W));
-      bbLowCells.push(padEnd(bbLowStr, COL_W));
+        const bbDecimals = price !== null && price < 1 ? 4 : 2;
+        const bbHighStr = bbIndicators
+          ? `${YELLOW}BBH $${bbIndicators.bb.upper.toFixed(bbDecimals)}${RESET}`
+          : `${DIM}BBH —${RESET}`;
+        const bbLowStr = bbIndicators
+          ? `${CYAN}BBL $${bbIndicators.bb.lower.toFixed(bbDecimals)}${RESET}`
+          : `${DIM}BBL —${RESET}`;
+        row4Cells.push(padEnd(bbHighStr, COL_W));
+        row5Cells.push(padEnd(bbLowStr, COL_W));
+
+      } else if (isSwingStrategy) {
+        const kStr = swingSnap?.stochK !== undefined
+          ? `K ${rsiColor(swingSnap.stochK)}${swingSnap.stochK.toFixed(0)}${RESET} D ${rsiColor(swingSnap.stochD ?? 50)}${(swingSnap.stochD ?? 0).toFixed(0)}${RESET}`
+          : `${DIM}StochRSI —${RESET}`;
+        const rsiSwingStr = swingSnap?.rsi !== undefined
+          ? `RSI4h ${rsiColor(swingSnap.rsi)}${swingSnap.rsi.toFixed(1)}${RESET}`
+          : `${DIM}RSI4h —${RESET}`;
+        const ema50str = swingSnap?.ema50 !== undefined
+          ? `EMA50 ${YELLOW}${swingSnap.ema50.toFixed(2)}${RESET}`
+          : `${DIM}EMA50 —${RESET}`;
+        row3Cells.push(padEnd(rsiSwingStr, COL_W));
+        row4Cells.push(padEnd(kStr, COL_W));
+        row5Cells.push(padEnd(ema50str, COL_W));
+
+      } else {
+        const biasColor = trend?.bias === 'bullish' ? GREEN : trend?.bias === 'bearish' ? RED : CYAN;
+        const biasStr = trend
+          ? `Bias ${biasColor}${trend.bias.toUpperCase()}${RESET}`
+          : `${DIM}Bias —${RESET}`;
+        const emaStr = trendIndicators
+          ? `EMA9 ${YELLOW}${trendIndicators.emaFast.toFixed(2)}${RESET}`
+          : `${DIM}EMA9 —${RESET}`;
+        const vwapStr = trendIndicators
+          ? `VWAP ${CYAN}${trendIndicators.vwap.toFixed(2)}${RESET}`
+          : `${DIM}VWAP —${RESET}`;
+        row3Cells.push(padEnd(biasStr, COL_W));
+        row4Cells.push(padEnd(emaStr, COL_W));
+        row5Cells.push(padEnd(vwapStr, COL_W));
+      }
     }
 
     const sep    = `  ${DIM}│${RESET}  `;
@@ -140,9 +179,9 @@ export class Dashboard {
       `${CYAN}${BOLD}╠══════════════════════════ Live Prices ═════════════════════════════╣${RESET}`,
       prefix + headerCells.join(sep),
       prefix + priceCells.join(sep),
-      prefix + rsiCells.join(sep),
-      prefix + bbHighCells.join(sep),
-      prefix + bbLowCells.join(sep),
+      prefix + row3Cells.join(sep),
+      prefix + row4Cells.join(sep),
+      prefix + row5Cells.join(sep),
     ];
   }
 
@@ -159,7 +198,7 @@ export class Dashboard {
     const statusLine = this.risk.isHalted()
       ? `${RED}${BOLD}🛑 HALTED (circuit breaker)${RESET}`
       : this.risk.isProfitLocked()
-        ? `${YELLOW}${BOLD}🔒 PROFIT LOCKED (+3% hit)${RESET}`
+        ? `${YELLOW}${BOLD}🔒 PROFIT LOCKED (+${(SETTINGS.DAILY_PROFIT_LOCK_PERCENT * 100).toFixed(0)}% hit)${RESET}`
         : `${GREEN}${BOLD}🟢 RUNNING${RESET}`;
 
     const lines = [
@@ -168,26 +207,49 @@ export class Dashboard {
       `${CYAN}${BOLD}║${RESET}  ${BOLD}Mode:${RESET} ${mode}  ${BOLD}UTC:${RESET} ${now}`,
       `${CYAN}${BOLD}║${RESET}  ${BOLD}Status:${RESET} ${statusLine}`,
       `${CYAN}${BOLD}║${RESET}  ${BOLD}Balance:${RESET} $${balance.toFixed(2)} USDT  ${BOLD}Daily PnL:${RESET} $${colorPnl(dailyPnl)} ${colorPercent(dailyPct)}`,
-      `${CYAN}${BOLD}║${RESET}  ${BOLD}Daily target:${RESET} ${bar(Math.max(dailyPct, 0), SETTINGS.DAILY_PROFIT_LOCK_PERCENT)} 3%  ${BOLD}Stretch:${RESET} 10%`,
+      `${CYAN}${BOLD}║${RESET}  ${BOLD}Daily target:${RESET} ${bar(Math.max(dailyPct, 0), SETTINGS.DAILY_PROFIT_LOCK_PERCENT)} ${(SETTINGS.DAILY_PROFIT_LOCK_PERCENT * 100).toFixed(0)}%  ${BOLD}Stretch:${RESET} ${(SETTINGS.STRETCH_TARGET_PERCENT * 100).toFixed(0)}%`,
       `${CYAN}${BOLD}║${RESET}  ${BOLD}Win rate:${RESET} ${(winRate * 100).toFixed(0)}% (${totalTrades} trades)`,
-      `${CYAN}${BOLD}║${RESET}  ${BOLD}Strategy:${RESET} ${SETTINGS.STRATEGY_TIMEFRAME} BB mean reversion  ${BOLD}Entry:${RESET} ≤ ${(SETTINGS.BB_ENTRY_MAX_DISTANCE_PERCENT * 100).toFixed(1)}% from BB low + RSI < ${SETTINGS.BB_ENTRY_RSI_MAX}  ${BOLD}Exit:${RESET} BB high + RSI > ${SETTINGS.BB_EXIT_RSI_MIN}`,
+      SETTINGS.ACTIVE_STRATEGY === 'bb-mean-reversion'
+        ? `${CYAN}${BOLD}║${RESET}  ${BOLD}Strategy:${RESET} ${SETTINGS.STRATEGY_TIMEFRAME} BB mean reversion  ${BOLD}Entry:${RESET} ≤ ${(SETTINGS.BB_ENTRY_MAX_DISTANCE_PERCENT * 100).toFixed(1)}% from BB low + RSI < ${SETTINGS.BB_ENTRY_RSI_MAX}  ${BOLD}Exit:${RESET} BB high + RSI > ${SETTINGS.BB_EXIT_RSI_MIN}`
+        : SETTINGS.ACTIVE_STRATEGY === 'rsi-stoch-swing'
+          ? `${CYAN}${BOLD}║${RESET}  ${BOLD}Strategy:${RESET} ${SETTINGS.SWING_TIMEFRAME} RSI+StochRSI Swing  ${BOLD}Entry:${RESET} RSI ${SETTINGS.SWING_RSI_LONG_MIN}–55 + StochRSI<20 cross-up + EMA50 + MACD  ${BOLD}TP/SL:${RESET} ${SETTINGS.SWING_RR_RATIO}R`
+          : `${CYAN}${BOLD}║${RESET}  ${BOLD}Strategy:${RESET} ${SETTINGS.STRATEGY_DIRECTION_TIMEFRAME}/${SETTINGS.STRATEGY_ENTRY_TIMEFRAME} VWAP + EMA retrace  ${BOLD}Entry:${RESET} breakout arm + EMA pullback rejection  ${BOLD}Exit:${RESET} stop / TP / trend flip`,
       `${CYAN}${BOLD}╠══════════════════════════ Cycle States ════════════════════════════╣${RESET}`,
     ];
 
-    for (const c of this.cycleManager.getCycles()) {
+    const isSwingActive = SETTINGS.ACTIVE_STRATEGY === 'rsi-stoch-swing';
+    const cycleList = isSwingActive
+      ? this.cycleManager.getSwingCycles()
+      : this.cycleManager.getCycles();
+
+    for (const c of cycleList) {
       let stateStr: string;
       if (c.state === 'idle') {
         stateStr = `${DIM}⬜ IDLE${RESET}`;
         lines.push(`${CYAN}${BOLD}║${RESET}  ${BOLD}${c.symbol}${RESET}  ${stateStr}`);
+      } else if (c.state === 'armed') {
+        stateStr = `${YELLOW}${BOLD}🎯 ARMED${RESET}`;
+        const snap = this.cycleManager.getSwingSnapshot(c.symbol);
+        const rsiStr = snap?.rsi !== undefined ? `  RSI ${snap.rsi.toFixed(1)}` : '';
+        lines.push(`${CYAN}${BOLD}║${RESET}  ${BOLD}${c.symbol}${RESET}  ${stateStr}${rsiStr}  ${DIM}waiting for confirmation${RESET}`);
       } else if (c.state === 'in_position' && c.position) {
         const pos = c.position;
         stateStr = `${GREEN}${BOLD}🟢 POSITION${RESET}`;
         const minsOpen = Math.max(0, Math.round((Date.now() - pos.openedAt) / 60_000));
+        const entryField = 'entryPrice' in pos
+          ? (pos as any).entryPrice
+          : (pos as any).buyFillPrice;
+        const stopPriceVal  = (pos as any).stopPrice;
+        const tpPriceVal    = (pos as any).takeProfitPrice;
+        const isTrendPos    = typeof stopPriceVal === 'number' && typeof tpPriceVal === 'number';
         lines.push(
           `${CYAN}${BOLD}║${RESET}  ${BOLD}${c.symbol}${RESET}  ${stateStr}` +
-          `  entry@$${pos.buyFillPrice.toFixed(2)}` +
-          `  entry RSI ${pos.entryRsi.toFixed(1)}` +
-          `  exit: BB high + RSI > ${pos.exitRsiThreshold}` +
+          `  entry@$${entryField.toFixed(2)}` +
+          (
+            isTrendPos
+              ? `  stop@$${stopPriceVal.toFixed(2)}  tp@$${tpPriceVal.toFixed(2)}`
+              : `  entry RSI ${((pos as any).entryRsi ?? 0).toFixed(1)}  exit: BB high + RSI > ${(pos as any).exitRsiThreshold ?? SETTINGS.BB_EXIT_RSI_MIN}`
+          ) +
           `  ${DIM}open ${minsOpen}m${RESET}`,
         );
       } else if (c.state === 'cooldown') {

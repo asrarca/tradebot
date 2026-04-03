@@ -1,7 +1,7 @@
 import { mexc as MexcExchange, OHLCV } from 'ccxt';
 import * as dotenv from 'dotenv';
 import logger from '../utils/logger';
-import { SETTINGS } from '../config/settings';
+import { SETTINGS } from '../config/runtimeSettings';
 
 dotenv.config();
 

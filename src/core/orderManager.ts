@@ -1,7 +1,7 @@
 import { getExchange, getMarketPrice } from './exchange';
 import { RiskManager } from './riskManager';
 import { EntrySignal, ExitSignal } from './signalEngine';
-import { SETTINGS } from '../config/settings';
+import { SETTINGS } from '../config/runtimeSettings';
 import logger from '../utils/logger';
 
 // ─── OrderManager ─────────────────────────────────────────────────────────────

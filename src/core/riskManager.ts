@@ -1,4 +1,4 @@
-import { SETTINGS } from '../config/settings';
+import { SETTINGS } from '../config/runtimeSettings';
 import logger from '../utils/logger';
 import { OpenPosition } from './signalEngine';
 

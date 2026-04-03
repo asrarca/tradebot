@@ -2,7 +2,7 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 import logger from './utils/logger';
-import { SETTINGS } from './config/settings';
+import { SETTINGS } from './config/runtimeSettings';
 import { TOKENS } from './config/tokens';
 import { getExchange, getUsdtBalance } from './core/exchange';
 import { DataLayer, Candle } from './core/dataLayer';
@@ -25,11 +25,34 @@ async function main(): Promise<void> {
 
   logger.info(`${SETTINGS.BOT_NAME} starting`, {
     mode: SETTINGS.MODE,
+    strategy: SETTINGS.ACTIVE_STRATEGY,
+    notificationsEnabled: SETTINGS.NOTIFICATIONS_ENABLED,
+    notifyProvider: SETTINGS.NOTIFY_PROVIDER,
     tokens: TOKENS.map((t) => t.symbol),
     dailyTarget: `${SETTINGS.DAILY_PROFIT_LOCK_PERCENT * 100}%`,
     stretchTarget: `${SETTINGS.STRETCH_TARGET_PERCENT * 100}%`,
     circuitBreaker: `${SETTINGS.DAILY_LOSS_CIRCUIT_BREAKER * 100}%`,
   });
+
+  if (SETTINGS.MODE === 'notify') {
+    if (!SETTINGS.NOTIFICATIONS_ENABLED) {
+      logger.warn('MODE=notify but NOTIFICATIONS_ENABLED=false; no phone alerts will be sent');
+    } else if (SETTINGS.NOTIFY_PROVIDER === 'telegram' && (!SETTINGS.TELEGRAM_BOT_TOKEN || !SETTINGS.TELEGRAM_CHAT_ID)) {
+      logger.warn('Telegram notifications selected but TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing');
+    } else if (SETTINGS.NOTIFY_PROVIDER === 'webhook' && !SETTINGS.NOTIFY_WEBHOOK_URL) {
+      logger.warn('Webhook notifications selected but NOTIFY_WEBHOOK_URL is missing');
+    }
+  }
+
+  const strategyIntervals = SETTINGS.ACTIVE_STRATEGY === 'bb-mean-reversion'
+    ? [SETTINGS.STRATEGY_TIMEFRAME]
+    : SETTINGS.ACTIVE_STRATEGY === 'rsi-stoch-swing'
+      ? [SETTINGS.SWING_TIMEFRAME, SETTINGS.SWING_HTF_TIMEFRAME]
+      : [SETTINGS.STRATEGY_DIRECTION_TIMEFRAME, SETTINGS.STRATEGY_ENTRY_TIMEFRAME];
+  const activeIntervals = Array.from(new Set<string>([
+    ...SETTINGS.CANDLE_INTERVALS,
+    ...strategyIntervals,
+  ]));
 
   // ── Validate exchange connectivity ──────────────────────────────────────────
   try {
@@ -64,7 +87,7 @@ async function main(): Promise<void> {
 
   // ── Initialise core modules ─────────────────────────────────────────────────
   const riskManager = new RiskManager(SETTINGS.PAPER_START_USDT);
-  const dataLayer = new DataLayer();
+  const dataLayer = new DataLayer(TOKENS.map((t) => t.symbol), activeIntervals);
   const cycleManager = new CycleManager(riskManager, TOKENS.map((t) => t.symbol));
   const dashboard = new Dashboard(riskManager, dataLayer, cycleManager);
 

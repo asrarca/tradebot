@@ -1,7 +1,7 @@
 import winston from 'winston';
 import path from 'path';
 import fs from 'fs';
-import { SETTINGS } from '../config/settings';
+import { SETTINGS } from '../config/runtimeSettings';
 
 // Ensure logs directory exists
 const logDir = path.resolve(SETTINGS.LOG_DIR);
@@ -11,28 +11,41 @@ if (!fs.existsSync(logDir)) {
 
 const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
+const timestampFirstJson = winston.format.printf((info) => {
+  const { timestamp, ...rest } = info;
+  const ordered = timestamp
+    ? { timestamp, ...rest }
+    : rest;
+  return JSON.stringify(ordered);
+});
+
+const fileJsonFormat = winston.format.combine(
+  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  winston.format.errors({ stack: true }),
+  timestampFirstJson,
+);
+
 const logger = winston.createLogger({
   level: 'debug',
-  format: winston.format.combine(
-    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-    winston.format.errors({ stack: true }),
-    winston.format.json(),
-  ),
   transports: [
     // Daily trade log file
     new winston.transports.File({
       filename: path.join(logDir, `trades-${today}.json`),
       level: 'info',
+      format: fileJsonFormat,
     }),
     // Error-only file
     new winston.transports.File({
       filename: path.join(logDir, `error-${today}.log`),
       level: 'error',
+      format: fileJsonFormat,
     }),
     // Console – human-readable (warn+ only; info/debug go to file so dashboard owns the terminal)
     new winston.transports.Console({
       level: process.env.LOG_LEVEL ?? 'warn',
       format: winston.format.combine(
+        winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+        winston.format.errors({ stack: true }),
         winston.format.colorize(),
         winston.format.printf(({ timestamp, level, message, ...meta }) => {
           const extras = Object.keys(meta).length

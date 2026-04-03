@@ -1,5 +1,5 @@
 import { IndicatorResult } from './indicators';
-import { SETTINGS } from '../config/settings';
+import { SETTINGS } from '../config/runtimeSettings';
 import { TokenConfig } from '../config/tokens';
 
 // ─── Signal types ─────────────────────────────────────────────────────────────

@@ -44,15 +44,15 @@ async function main(): Promise<void> {
     }
   }
 
-  const strategyIntervals = SETTINGS.ACTIVE_STRATEGY === 'bb-mean-reversion'
-    ? [SETTINGS.STRATEGY_TIMEFRAME]
-    : SETTINGS.ACTIVE_STRATEGY === 'rsi-stoch-swing'
-      ? [SETTINGS.SWING_TIMEFRAME, SETTINGS.SWING_HTF_TIMEFRAME]
-      : [SETTINGS.STRATEGY_DIRECTION_TIMEFRAME, SETTINGS.STRATEGY_ENTRY_TIMEFRAME];
-  const activeIntervals = Array.from(new Set<string>([
-    ...SETTINGS.CANDLE_INTERVALS,
-    ...strategyIntervals,
-  ]));
+  // Build the exact set of intervals needed – no more, no less.
+  // '1m' is always included for the live price ticker in the dashboard.
+  // rsi-stoch-swing only needs 1m (ticker) + 4h/1d (REST-polled by DataLayer).
+  // 5m is not needed for the swing strategy so we don't open that WS stream.
+  const activeIntervals: string[] = SETTINGS.ACTIVE_STRATEGY === 'rsi-stoch-swing'
+    ? ['1m', SETTINGS.SWING_TIMEFRAME, SETTINGS.SWING_HTF_TIMEFRAME]
+    : SETTINGS.ACTIVE_STRATEGY === 'bb-mean-reversion'
+      ? Array.from(new Set(['1m', SETTINGS.STRATEGY_TIMEFRAME]))
+      : Array.from(new Set(['1m', SETTINGS.STRATEGY_DIRECTION_TIMEFRAME, SETTINGS.STRATEGY_ENTRY_TIMEFRAME]));
 
   // ── Validate exchange connectivity ──────────────────────────────────────────
   try {

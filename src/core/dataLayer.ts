@@ -38,10 +38,20 @@ function bufferKey(symbol: string, interval: string): string {
 const PING_INTERVAL_MS = 10_000;  // Send JSON heartbeat every 10 s
 const WATCHDOG_TIMEOUT_MS = 25_000; // Force-reconnect if no message in 25 s
 
+// MEXC WebSocket blocks kline streams for these intervals – use REST polling instead
+const REST_ONLY_INTERVALS = new Set(['4h', '1d']);
+
+// How often to poll each REST-only interval (frequent enough to catch a candle close)
+const REST_POLL_MS: Record<string, number> = {
+  '4h': 10 * 60 * 1000,   // every 10 minutes
+  '1d': 60 * 60 * 1000,   // every hour
+};
+
 export class DataLayer {
   private buffers: CandleBuffer = new Map();
   private sockets: Map<string, WebSocket> = new Map();
   private heartbeats: Map<string, NodeJS.Timeout> = new Map();
+  private restPollTimers: Map<string, NodeJS.Timeout> = new Map();
   private lastTickAt: Map<string, number> = new Map(); // Unix ms of last WS kline tick
   private callbacks: CandleCallback[] = [];
   private readonly MEXC_WS_BASE = 'wss://wbs-api.mexc.com/ws';
@@ -80,15 +90,25 @@ export class DataLayer {
 
     logger.info('DataLayer: candle buffers seeded, connecting WebSocket streams…');
 
+    const wsIntervals   = this.intervals.filter((i) => !REST_ONLY_INTERVALS.has(i));
+    const restIntervals = this.intervals.filter((i) => REST_ONLY_INTERVALS.has(i));
+
     for (const symbol of this.symbols) {
-      for (const interval of this.intervals) {
+      for (const interval of wsIntervals) {
         this.subscribeStream(symbol, interval);
       }
     }
 
-    logger.info(`DataLayer: subscribed to ${this.symbols.length * this.intervals.length} streams`, {
+    for (const symbol of this.symbols) {
+      for (const interval of restIntervals) {
+        this.startRestPoll(symbol, interval);
+      }
+    }
+
+    logger.info(`DataLayer: ${this.symbols.length * wsIntervals.length} WS streams, ${this.symbols.length * restIntervals.length} REST-polled streams`, {
       symbols: this.symbols,
-      intervals: this.intervals,
+      wsIntervals,
+      restIntervals,
     });
   }
 
@@ -109,6 +129,49 @@ export class DataLayer {
     } catch (err) {
       logger.error(`Failed to seed buffer for ${symbol} ${interval}`, { err });
     }
+  }
+
+  // ── Poll a REST endpoint for intervals blocked on MEXC WebSocket ────────────
+  private startRestPoll(symbol: string, interval: string): void {
+    const key    = bufferKey(symbol, interval);
+    const pollMs = REST_POLL_MS[interval] ?? 15 * 60 * 1000;
+
+    const poll = async (): Promise<void> => {
+      try {
+        const raw = await fetchOHLCV(symbol, interval, SETTINGS.CANDLE_BUFFER_SIZE);
+        const candles: Candle[] = raw.map(([time, open, high, low, close, volume]) => ({
+          time:   time   as number,
+          open:   open   as number,
+          high:   high   as number,
+          low:    low    as number,
+          close:  close  as number,
+          volume: volume as number,
+        }));
+
+        const prev = this.buffers.get(key);
+        const prevLastTime = prev && prev.length > 0 ? prev[prev.length - 1].time : null;
+        const newLastTime  = candles.length > 0 ? candles[candles.length - 1].time : null;
+
+        this.buffers.set(key, candles);
+        this.lastTickAt.set(key, Date.now());
+
+        // Fire callbacks only when a new candle has closed
+        if (newLastTime !== null && newLastTime !== prevLastTime) {
+          logger.info(`REST poll: new ${interval} candle for ${symbol} @ ${new Date(newLastTime).toISOString()}`);
+          for (const cb of this.callbacks) {
+            cb(symbol, interval, [...candles]);
+          }
+        }
+      } catch (err) {
+        logger.warn(`REST poll failed: ${symbol} ${interval}`, { err });
+      }
+    };
+
+    // Run once immediately (buffer is already seeded, this keeps it fresh)
+    void poll();
+    const timer = setInterval(() => void poll(), pollMs);
+    this.restPollTimers.set(key, timer);
+    logger.info(`REST poll started: ${symbol} ${interval} every ${pollMs / 60_000}min`);
   }
 
   // ── Subscribe to a MEXC WebSocket kline stream ───────────────────────────────
@@ -341,5 +404,11 @@ export class DataLayer {
       logger.info(`WS closed: ${key}`);
     }
     this.sockets.clear();
+
+    for (const [key, timer] of this.restPollTimers) {
+      clearInterval(timer);
+      logger.info(`REST poll cleared: ${key}`);
+    }
+    this.restPollTimers.clear();
   }
 }
